@@ -3,88 +3,118 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Woo Exporter</title>
+    <title>Woo Export Ops Console</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Manrope:wght@400;500;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Oxanium:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="noise"></div>
-    <main class="layout">
-      <header class="hero">
-        <p class="hero__eyebrow">WOOCOMMERCE EXPORT</p>
-        <h1>Produtos + imagens + CSV pronto para import</h1>
+    <div class="bg-grid"></div>
+    <div class="scanline"></div>
+    <div class="vignette"></div>
+
+    <main class="console">
+      <header class="hero reveal">
+        <p class="hero__eyebrow">WOO EXPORT OPS</p>
+        <h1>HACKER MODE DATA EXFILTRATION</h1>
         <p class="hero__copy">
-          Coloca a URL de uma loja WooCommerce e a app exporta os produtos da API publica, baixa as imagens
-          e gera um ficheiro CSV preparado para importar noutro WooCommerce.
+          Liga uma loja WooCommerce, extrai catalogo completo, baixa assets e gera ficheiros de migracao.
+          Stack de exportacao focada em velocidade, rastreio e controlo operacional.
         </p>
       </header>
 
-      <section class="panel">
-        <form id="scrape-form" class="form">
-          <label class="field">
-            <span>URL da loja</span>
-            <input
-              id="target-url"
-              name="url"
-              type="url"
-              placeholder="https://exemplo.com"
-              required
-              autocomplete="off"
-            />
-          </label>
+      <section class="workspace">
+        <div class="stack stack--left">
+          <section class="panel reveal">
+            <div class="panel__head">
+              <h2>Target Configuration</h2>
+              <span class="chip">LIVE LINK</span>
+            </div>
 
-          <label class="field field--small">
-            <span>Limite de produtos (0 = todos)</span>
-            <input id="max-products" name="maxProducts" type="number" min="0" max="10000" value="0" />
-          </label>
+            <form id="scrape-form" class="form">
+              <label class="field">
+                <span>URL da loja</span>
+                <input
+                  id="target-url"
+                  name="url"
+                  type="url"
+                  placeholder="https://exemplo.com"
+                  required
+                  autocomplete="off"
+                />
+              </label>
 
-          <label class="field field--full">
-            <span>Pasta de saída</span>
-            <input
-              id="output-dir"
-              name="outputDir"
-              type="text"
-              placeholder="/Users/teu-utilizador/Downloads/woo-exports"
-              autocomplete="off"
-            />
-            <small>Se deixares vazio, usa a pasta padrão fora da app.</small>
-          </label>
+              <label class="field field--small">
+                <span>Limite de produtos (0 = todos)</span>
+                <input id="max-products" name="maxProducts" type="number" min="0" max="10000" value="0" />
+              </label>
 
-          <button id="start-btn" class="button-full" type="submit">Exportar WooCommerce</button>
-        </form>
+              <label class="field field--full">
+                <span>Pasta de saida</span>
+                <input
+                  id="output-dir"
+                  name="outputDir"
+                  type="text"
+                  placeholder="/Users/teu-utilizador/Downloads/woo-exports"
+                  autocomplete="off"
+                />
+                <small>Default automatico se vazio.</small>
+              </label>
 
-        <div id="status" class="status status--idle">Aguardando URL...</div>
+              <button id="start-btn" class="button-full" type="submit">Iniciar Exportacao Woo</button>
+            </form>
 
-        <div class="metrics" id="metrics">
-          <article>
-            <p>Produtos encontrados</p>
-            <strong id="m-products-found">0</strong>
-          </article>
-          <article>
-            <p>Produtos processados</p>
-            <strong id="m-products-processed">0</strong>
-          </article>
-          <article>
-            <p>Imagens baixadas</p>
-            <strong id="m-images-downloaded">0</strong>
-          </article>
-          <article>
-            <p>CSV gerado</p>
-            <strong id="m-csv">NAO</strong>
-          </article>
+            <div id="status" class="status status--idle">Aguardando URL...</div>
+          </section>
+
+          <section class="panel reveal">
+            <div class="panel__head">
+              <h2>Transfer Report</h2>
+              <span class="chip">OUTPUT</span>
+            </div>
+            <div class="result" id="result"></div>
+          </section>
         </div>
 
-        <div class="result" id="result"></div>
+        <div class="stack stack--right">
+          <section class="panel reveal">
+            <div class="panel__head">
+              <h2>Runtime Metrics</h2>
+              <span class="chip">TELEMETRY</span>
+            </div>
 
-        <section class="log-wrap">
-          <h2>Logs</h2>
-          <pre id="logs"></pre>
-        </section>
+            <div class="metrics" id="metrics">
+              <article>
+                <p>Produtos encontrados</p>
+                <strong id="m-products-found">0</strong>
+              </article>
+              <article>
+                <p>Produtos processados</p>
+                <strong id="m-products-processed">0</strong>
+              </article>
+              <article>
+                <p>Imagens baixadas</p>
+                <strong id="m-images-downloaded">0</strong>
+              </article>
+              <article>
+                <p>CSV gerado</p>
+                <strong id="m-csv">NAO</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel reveal">
+            <div class="panel__head">
+              <h2>Live Logs</h2>
+              <span class="chip">STREAM</span>
+            </div>
+            <pre id="logs"></pre>
+          </section>
+        </div>
       </section>
     </main>
 
