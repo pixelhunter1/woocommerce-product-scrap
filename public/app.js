@@ -5,6 +5,7 @@ const logsEl = document.getElementById('logs');
 const resultEl = document.getElementById('result');
 const outputDirInput = document.getElementById('output-dir');
 const languageSelect = document.getElementById('language-select');
+const runFeedbackEl = document.getElementById('run-feedback');
 
 const metrics = {
   productsFound: document.getElementById('m-products-found'),
@@ -18,6 +19,8 @@ let knownLogCount = 0;
 let currentLanguage = localStorage.getItem('wooExportLanguage') || 'en';
 let currentStatus = { mode: 'idle', key: 'status.idle', params: null, raw: null };
 let csvGenerated = false;
+let isJobRunning = false;
+let feedbackModel = null;
 
 const translations = {
   en: {
@@ -42,6 +45,7 @@ const translations = {
     'form.outputDir.placeholder': '/Users/your-user/Downloads/woo-exports',
     'form.outputDir.help': 'If empty, default output folder is used.',
     'form.submit': 'Start WooCommerce Export',
+    'form.submitRunning': 'Export Running...',
     'metrics.productsFound': 'Products discovered',
     'metrics.productsProcessed': 'Products processed',
     'metrics.imagesDownloaded': 'Images downloaded',
@@ -61,14 +65,21 @@ const translations = {
     'result.products': 'Products',
     'result.imagesDownloaded': 'Images downloaded',
     'result.importCsv': 'Import CSV',
-    'result.metadataJson': 'Metadata JSON'
+    'result.metadataJson': 'Metadata JSON',
+    'feedback.running.title': 'Export in progress',
+    'feedback.running.body':
+      'Processing {processed}/{discovered} products. Images downloaded: {images}.',
+    'feedback.success.title': 'Export completed',
+    'feedback.success.body': 'All files were generated successfully and are ready for import.',
+    'feedback.failed.title': 'Export failed',
+    'feedback.failed.body': 'The job stopped with an error. Check logs for details.'
   },
   fr: {
     'page.title': "Console d'export WooCommerce",
     'hero.eyebrow': 'OPERATIONS EXPORT WOOCOMMERCE',
     'hero.title': "Console professionnelle d'export de donnees",
     'hero.copy':
-      'Connectez une boutique WooCommerce, capturez un catalogue structure et generez des sorties prêtes pour migration avec visibilite operationnelle.',
+      'Connectez une boutique WooCommerce, capturez un catalogue structure et generez des sorties pretes pour migration avec visibilite operationnelle.',
     'language.label': 'Langue',
     'panel.target.title': 'Configuration cible',
     'panel.report.title': 'Rapport de transfert',
@@ -85,6 +96,7 @@ const translations = {
     'form.outputDir.placeholder': '/Users/votre-user/Downloads/woo-exports',
     'form.outputDir.help': 'Si vide, le dossier par defaut est utilise.',
     'form.submit': "Demarrer l'export WooCommerce",
+    'form.submitRunning': 'Export en cours...',
     'metrics.productsFound': 'Produits detectes',
     'metrics.productsProcessed': 'Produits traites',
     'metrics.imagesDownloaded': 'Images telechargees',
@@ -104,7 +116,14 @@ const translations = {
     'result.products': 'Produits',
     'result.imagesDownloaded': 'Images telechargees',
     'result.importCsv': "CSV d'import",
-    'result.metadataJson': 'JSON metadata'
+    'result.metadataJson': 'JSON metadata',
+    'feedback.running.title': 'Export en cours',
+    'feedback.running.body':
+      'Traitement {processed}/{discovered} produits. Images telechargees: {images}.',
+    'feedback.success.title': 'Export termine',
+    'feedback.success.body': 'Tous les fichiers ont ete generes avec succes et sont prets a importer.',
+    'feedback.failed.title': "Echec de l'export",
+    'feedback.failed.body': "Le job s'est arrete avec une erreur. Consultez les logs pour les details."
   },
   es: {
     'page.title': 'Consola de exportacion WooCommerce',
@@ -128,6 +147,7 @@ const translations = {
     'form.outputDir.placeholder': '/Users/tu-user/Downloads/woo-exports',
     'form.outputDir.help': 'Si se deja vacio, se usa la carpeta por defecto.',
     'form.submit': 'Iniciar exportacion WooCommerce',
+    'form.submitRunning': 'Exportacion en curso...',
     'metrics.productsFound': 'Productos detectados',
     'metrics.productsProcessed': 'Productos procesados',
     'metrics.imagesDownloaded': 'Imagenes descargadas',
@@ -147,7 +167,14 @@ const translations = {
     'result.products': 'Productos',
     'result.imagesDownloaded': 'Imagenes descargadas',
     'result.importCsv': 'CSV de importacion',
-    'result.metadataJson': 'JSON metadata'
+    'result.metadataJson': 'JSON metadata',
+    'feedback.running.title': 'Exportacion en progreso',
+    'feedback.running.body':
+      'Procesando {processed}/{discovered} productos. Imagenes descargadas: {images}.',
+    'feedback.success.title': 'Exportacion completada',
+    'feedback.success.body': 'Todos los archivos se generaron correctamente y estan listos para importar.',
+    'feedback.failed.title': 'Exportacion fallida',
+    'feedback.failed.body': 'El job se detuvo con un error. Revisa los logs para detalles.'
   }
 };
 
@@ -176,6 +203,80 @@ function setStatusRaw(text, mode) {
   statusEl.className = `status status--${mode}`;
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function setStartButtonRunningState(running) {
+  isJobRunning = running;
+  startBtn.disabled = running;
+  startBtn.textContent = running ? t('form.submitRunning') : t('form.submit');
+}
+
+function setFeedbackModel(model) {
+  feedbackModel = model;
+  renderFeedback();
+}
+
+function renderFeedback() {
+  if (!runFeedbackEl) {
+    return;
+  }
+
+  if (!feedbackModel) {
+    runFeedbackEl.hidden = true;
+    runFeedbackEl.className = 'run-feedback';
+    runFeedbackEl.innerHTML = '';
+    return;
+  }
+
+  if (feedbackModel.type === 'running') {
+    const discovered = feedbackModel.discovered ?? 0;
+    const processed = feedbackModel.processed ?? 0;
+    const images = feedbackModel.images ?? 0;
+    runFeedbackEl.className = 'run-feedback run-feedback--running';
+    runFeedbackEl.innerHTML = `
+      <strong>${escapeHtml(t('feedback.running.title'))}</strong>
+      <p>${escapeHtml(t('feedback.running.body', { discovered, processed, images }))}</p>
+    `;
+    runFeedbackEl.hidden = false;
+    return;
+  }
+
+  if (feedbackModel.type === 'success') {
+    const details = [
+      `${t('result.products')}: ${feedbackModel.products || 0}`,
+      `${t('result.imagesDownloaded')}: ${feedbackModel.images || 0}`,
+      `${t('result.importCsv')}: ${feedbackModel.importCsv || 'n/a'}`,
+      `${t('result.metadataJson')}: ${feedbackModel.metadataJson || 'n/a'}`
+    ];
+
+    runFeedbackEl.className = 'run-feedback run-feedback--success';
+    runFeedbackEl.innerHTML = `
+      <strong>${escapeHtml(t('feedback.success.title'))}</strong>
+      <p>${escapeHtml(t('feedback.success.body'))}</p>
+      <ul>${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+    `;
+    runFeedbackEl.hidden = false;
+    return;
+  }
+
+  if (feedbackModel.type === 'failed') {
+    const message = feedbackModel.error || t('status.unknownError');
+    runFeedbackEl.className = 'run-feedback run-feedback--failed';
+    runFeedbackEl.innerHTML = `
+      <strong>${escapeHtml(t('feedback.failed.title'))}</strong>
+      <p>${escapeHtml(`${t('feedback.failed.body')} ${message}`)}</p>
+    `;
+    runFeedbackEl.hidden = false;
+  }
+}
+
 function rerenderStatus() {
   if (currentStatus.raw) {
     statusEl.textContent = currentStatus.raw;
@@ -200,9 +301,11 @@ function applyTranslations() {
     node.placeholder = t(node.dataset.i18nPlaceholder);
   }
 
+  startBtn.textContent = isJobRunning ? t('form.submitRunning') : t('form.submit');
   metrics.csv.textContent = csvGenerated ? t('flag.yes') : t('flag.no');
 
   rerenderStatus();
+  renderFeedback();
 }
 
 async function loadConfig() {
@@ -254,6 +357,7 @@ function clearUI() {
   metrics.imagesDownloaded.textContent = '0';
   csvGenerated = false;
   metrics.csv.textContent = t('flag.no');
+  setFeedbackModel(null);
 }
 
 async function fetchJob(jobId) {
@@ -280,38 +384,63 @@ function startPolling(jobId) {
       const job = await fetchJob(jobId);
       renderMetrics(job);
       appendLogs(job.logs);
+      setFeedbackModel({
+        type: 'running',
+        discovered: job.progress?.productsDiscovered ?? 0,
+        processed: job.progress?.productsProcessed ?? 0,
+        images: job.progress?.imagesDownloaded ?? 0
+      });
 
       if (job.status === 'finished') {
         setStatusKey('status.success', 'success');
-        startBtn.disabled = false;
+        setStartButtonRunningState(false);
 
         const outputDir = job.result?.outputDir || 'n/a';
         const importCsv = job.result?.files?.importCsv || 'n/a';
         const metadataJson = job.result?.files?.metadataJson || 'n/a';
         const sum = job.result?.summary || {};
+        const productsProcessed = sum.productsProcessed || 0;
+        const imagesDownloaded = sum.imagesDownloaded || 0;
 
         resultEl.innerHTML = `
           <strong>${t('result.outputDir')}:</strong> ${outputDir}<br>
-          <strong>${t('result.products')}:</strong> ${sum.productsProcessed || 0}<br>
-          <strong>${t('result.imagesDownloaded')}:</strong> ${sum.imagesDownloaded || 0}<br>
+          <strong>${t('result.products')}:</strong> ${productsProcessed}<br>
+          <strong>${t('result.imagesDownloaded')}:</strong> ${imagesDownloaded}<br>
           <strong>${t('result.importCsv')}:</strong> ${importCsv}<br>
           <strong>${t('result.metadataJson')}:</strong> ${metadataJson}
         `;
+        setFeedbackModel({
+          type: 'success',
+          products: productsProcessed,
+          images: imagesDownloaded,
+          importCsv,
+          metadataJson
+        });
+        resultEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
         stopPolling();
       }
 
       if (job.status === 'failed') {
+        const errorMessage = job.error || t('status.unknownError');
         setStatusRaw(
-          `${t('status.failedPrefix')}: ${job.error || t('status.unknownError')}`,
+          `${t('status.failedPrefix')}: ${errorMessage}`,
           'failed'
         );
-        startBtn.disabled = false;
+        setStartButtonRunningState(false);
+        setFeedbackModel({
+          type: 'failed',
+          error: errorMessage
+        });
         stopPolling();
       }
     } catch (error) {
       setStatusRaw(`${t('status.updateErrorPrefix')}: ${error.message}`, 'failed');
-      startBtn.disabled = false;
+      setStartButtonRunningState(false);
+      setFeedbackModel({
+        type: 'failed',
+        error: error.message
+      });
       stopPolling();
     }
   }, 1500);
@@ -321,8 +450,14 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
   clearUI();
-  startBtn.disabled = true;
+  setStartButtonRunningState(true);
   setStatusKey('status.starting', 'running');
+  setFeedbackModel({
+    type: 'running',
+    discovered: 0,
+    processed: 0,
+    images: 0
+  });
 
   const body = {
     url: document.getElementById('target-url').value.trim(),
@@ -347,7 +482,11 @@ form.addEventListener('submit', async (event) => {
     startPolling(payload.jobId);
   } catch (error) {
     setStatusRaw(error.message, 'failed');
-    startBtn.disabled = false;
+    setStartButtonRunningState(false);
+    setFeedbackModel({
+      type: 'failed',
+      error: error.message
+    });
   }
 });
 

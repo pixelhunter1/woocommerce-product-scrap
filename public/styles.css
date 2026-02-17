@@ -43,6 +43,16 @@
   }
 }
 
+@keyframes pulseGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(66, 255, 171, 0);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(66, 255, 171, 0.2);
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -365,6 +375,53 @@ button:disabled {
   color: #ffd6de;
   border-color: rgba(255, 95, 122, 0.63);
   background: rgba(60, 11, 25, 0.72);
+}
+
+.run-feedback {
+  margin-top: 0.75rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 0.72rem 0.8rem;
+  background: rgba(5, 20, 14, 0.68);
+  animation: pulseGlow 1.8s ease-in-out infinite;
+}
+
+.run-feedback strong {
+  display: block;
+  margin: 0;
+  font-size: 0.86rem;
+  letter-spacing: 0.03rem;
+}
+
+.run-feedback p {
+  margin: 0.35rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.run-feedback ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.26rem;
+  color: #d9ffe8;
+  font-size: 0.76rem;
+}
+
+.run-feedback--running {
+  border-color: rgba(68, 216, 255, 0.55);
+  background: rgba(4, 34, 42, 0.72);
+}
+
+.run-feedback--success {
+  border-color: rgba(75, 248, 149, 0.58);
+  background: rgba(5, 43, 24, 0.75);
+}
+
+.run-feedback--failed {
+  border-color: rgba(255, 95, 122, 0.62);
+  background: rgba(62, 9, 22, 0.77);
 }
 
 .metrics {
