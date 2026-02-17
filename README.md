@@ -74,8 +74,8 @@ WooCommerce Store Migrator is a two-part system for migrating products between W
 
 ```bash
 # Clone the repository
-git clone https://github.com/pixelhunter1/scrap.git
-cd scrap
+git clone https://github.com/pixelhunter1/woocommerce-product-scrap.git
+cd woocommerce-product-scrap
 
 # Install dependencies
 npm install
@@ -140,7 +140,7 @@ The **WooJSON Importer** plugin allows you to import the exported `metadata.json
 
 ### Download
 
-> **[Download woo-json-importer.zip](https://github.com/pixelhunter1/scrap/raw/master/wp-plugin/woo-json-importer.zip)**
+> **[Download woo-json-importer.zip](https://github.com/pixelhunter1/woocommerce-product-scrap/raw/master/wp-plugin/woo-json-importer.zip)**
 
 ### Installation
 
