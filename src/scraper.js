@@ -837,12 +837,19 @@ function resolveAttributeIdentity(attribute) {
   const rawLabel = formatAttributeLabel(attribute?.label);
   const taxonomy = formatAttributeLabel(attribute?.taxonomy);
   const slug = formatAttributeLabel(attribute?.slug);
+  const rawAttributeKey = formatAttributeLabel(attribute?.attribute);
 
-  const resolvedName = rawName || rawLabel || taxonomy || slug;
+  const resolvedName = rawName || rawLabel || taxonomy || slug || rawAttributeKey;
+  const globalCandidate = String(
+    attribute?.taxonomy || attribute?.slug || attribute?.name || attribute?.attribute || ''
+  ).toLowerCase();
+  const isGlobal =
+    globalCandidate.startsWith('pa_') ||
+    (Number.isFinite(Number(attribute?.id)) && Number(attribute.id) > 0);
 
   return {
     name: resolvedName,
-    global: '0'
+    global: isGlobal ? '1' : '0'
   };
 }
 
@@ -877,6 +884,7 @@ function toKeyVariants(value) {
 function attributeKeyCandidates(attribute) {
   const candidates = new Set();
   const rawCandidates = [
+    attribute?.attribute,
     attribute?.taxonomy,
     attribute?.slug,
     attribute?.name,
@@ -898,8 +906,7 @@ function attributeKeyCandidates(attribute) {
 
 function buildProductAttributeSchema(product) {
   const attrs = Array.isArray(product?.attributes) ? product.attributes : [];
-
-  return attrs.map((attribute) => {
+  const schema = attrs.map((attribute) => {
     const identity = resolveAttributeIdentity(attribute);
     const values = resolveAttributeValues(attribute, identity);
     const optionMap = new Map();
@@ -917,6 +924,31 @@ function buildProductAttributeSchema(product) {
       optionMap
     };
   });
+
+  const variations = Array.isArray(product?.variationDetails) ? product.variationDetails : [];
+  for (const variation of variations) {
+    const selectionMap = buildVariationSelectionMap(variation);
+    for (const entry of schema) {
+      let selected = '';
+      for (const key of entry.keys) {
+        if (selectionMap.has(key)) {
+          selected = selectionMap.get(key);
+          break;
+        }
+      }
+
+      const resolved = resolveVariationAttributeValue(entry, selected);
+      const normalized = normalizeMatchValue(resolved);
+      if (!resolved || !normalized || entry.optionMap.has(normalized)) {
+        continue;
+      }
+
+      entry.optionMap.set(normalized, resolved);
+      entry.values.push(resolved);
+    }
+  }
+
+  return schema;
 }
 
 function buildVariationSelectionMap(variation) {
@@ -966,37 +998,76 @@ function resolveAttributeValues(attribute, identity) {
   }
 
   const isGlobal = identity?.global === '1';
+  const values = [];
+  const pushValue = (rawValue) => {
+    const raw = String(rawValue || '').trim();
+    if (!raw) {
+      return;
+    }
+    values.push(isGlobal ? slugifyAttributeTerm(raw) : raw);
+  };
+
+  const pushTokenized = (rawValue) => {
+    const raw = String(rawValue || '').trim();
+    if (!raw) {
+      return;
+    }
+
+    if (raw.includes('|')) {
+      for (const token of raw.split('|')) {
+        pushValue(token);
+      }
+      return;
+    }
+
+    if (raw.includes(',') && !raw.includes('http')) {
+      for (const token of raw.split(',')) {
+        pushValue(token);
+      }
+      return;
+    }
+
+    pushValue(raw);
+  };
 
   if (Array.isArray(attribute.terms)) {
-    return attribute.terms
-      .map((term) => {
-        const value = isGlobal ? term?.slug || term?.name : term?.name || term?.slug;
-        return String(value || '').trim();
-      })
-      .filter(Boolean);
+    for (const term of attribute.terms) {
+      if (term && typeof term === 'object') {
+        const value = isGlobal
+          ? term?.slug || term?.name || term?.value || term?.option
+          : term?.name || term?.value || term?.option || term?.slug;
+        pushValue(value);
+      } else {
+        pushTokenized(term);
+      }
+    }
   }
 
   if (Array.isArray(attribute.options)) {
-    return attribute.options
-      .map((value) => {
-        const raw = String(value || '').trim();
-        if (!raw) {
-          return '';
-        }
-        return isGlobal ? slugifyAttributeTerm(raw) : raw;
-      })
-      .filter(Boolean);
+    for (const value of attribute.options) {
+      pushTokenized(value);
+    }
   }
 
   if (attribute.option) {
-    const raw = String(attribute.option).trim();
-    if (!raw) {
-      return [];
-    }
-    return [isGlobal ? slugifyAttributeTerm(raw) : raw];
+    pushTokenized(attribute.option);
   }
 
-  return [];
+  if (Array.isArray(attribute.values)) {
+    for (const value of attribute.values) {
+      pushTokenized(value);
+    }
+  }
+
+  if (attribute.value !== undefined && attribute.value !== null) {
+    pushTokenized(attribute.value);
+  }
+
+  if (attribute.attribute_value !== undefined && attribute.attribute_value !== null) {
+    pushTokenized(attribute.attribute_value);
+  }
+
+  return [...new Set(values)].filter(Boolean);
 }
 
 function extractAttributeColumns(productLike, index) {
@@ -1013,7 +1084,12 @@ function extractAttributeColumns(productLike, index) {
   const identity = resolveAttributeIdentity(attribute);
   const values = resolveAttributeValues(attribute, identity);
   const fallbackName =
-    identity.name || attribute.name || attribute.slug || attribute.taxonomy || `attribute-${index + 1}`;
+    identity.name ||
+    attribute.name ||
+    attribute.slug ||
+    attribute.taxonomy ||
+    attribute.attribute ||
+    `attribute-${index + 1}`;
 
   return {
     [`Attribute ${index + 1} name`]: String(fallbackName),
@@ -1269,6 +1345,101 @@ async function writeCsv(filePath, headers, rows) {
   await fs.writeFile(filePath, `\uFEFF${lines.join('\n')}\n`, 'utf8');
 }
 
+function normalizeTermCollection(primary, secondary) {
+  const merged = [];
+  if (Array.isArray(primary)) {
+    merged.push(...primary);
+  }
+  if (Array.isArray(secondary)) {
+    merged.push(...secondary);
+  }
+
+  const map = new Map();
+  for (const item of merged) {
+    if (!item) {
+      continue;
+    }
+
+    if (typeof item === 'string') {
+      const name = item.trim();
+      if (!name) {
+        continue;
+      }
+      const key = `name:${name.toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, { name });
+      }
+      continue;
+    }
+
+    if (typeof item !== 'object') {
+      continue;
+    }
+
+    const id = Number(item.id);
+    const slug = String(item.slug || '').trim();
+    const name = String(item.name || slug || '').trim();
+    if (!name && !Number.isFinite(id) && !slug) {
+      continue;
+    }
+
+    const key = Number.isFinite(id)
+      ? `id:${id}`
+      : slug
+        ? `slug:${slug.toLowerCase()}`
+        : `name:${name.toLowerCase()}`;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        ...(Number.isFinite(id) ? { id } : {}),
+        ...(slug ? { slug } : {}),
+        ...(name ? { name } : {})
+      });
+    }
+  }
+
+  return [...map.values()];
+}
+
+function normalizeAttributeCollection(primary, secondary) {
+  const merged = [];
+  if (Array.isArray(primary)) {
+    merged.push(...primary);
+  }
+  if (Array.isArray(secondary)) {
+    merged.push(...secondary);
+  }
+
+  const map = new Map();
+  for (const attribute of merged) {
+    if (!attribute || typeof attribute !== 'object') {
+      continue;
+    }
+
+    const identity = resolveAttributeIdentity(attribute);
+    const key = normalizeMatchValue(
+      attribute?.attribute || attribute?.taxonomy || attribute?.slug || identity.name
+    );
+    if (!key) {
+      continue;
+    }
+
+    if (!map.has(key)) {
+      map.set(key, attribute);
+      continue;
+    }
+
+    const existing = map.get(key);
+    const existingValues = resolveAttributeValues(existing, resolveAttributeIdentity(existing));
+    const nextValues = resolveAttributeValues(attribute, resolveAttributeIdentity(attribute));
+    if (nextValues.length > existingValues.length) {
+      map.set(key, { ...existing, ...attribute });
+    }
+  }
+
+  return [...map.values()];
+}
+
 function simplifyProduct(product, siteRoot) {
   const images = Array.isArray(product.images)
     ? product.images
@@ -1294,9 +1465,9 @@ function simplifyProduct(product, siteRoot) {
     is_featured: product.is_featured,
     is_in_stock: product.is_in_stock,
     prices: product.prices,
-    categories: product.categories,
-    tags: product.tags,
-    attributes: product.attributes,
+    categories: normalizeTermCollection(product.categories, product.raw?.categories),
+    tags: normalizeTermCollection(product.tags, product.raw?.tags),
+    attributes: normalizeAttributeCollection(product.attributes, product.raw?.attributes),
     images,
     variationDetails: [],
     raw: product

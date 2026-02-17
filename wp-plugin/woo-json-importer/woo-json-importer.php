@@ -1191,110 +1191,328 @@ if (!defined('ABSPATH')) {
 			return array_values(array_unique(array_filter($ids)));
 		}
 
-		private function build_parent_attributes($productData, $isVariable) {
-			if (empty($productData['attributes']) || !is_array($productData['attributes'])) {
-				return array();
+			private function build_parent_attributes($productData, $isVariable) {
+				if (empty($productData['attributes']) || !is_array($productData['attributes'])) {
+					return array();
+				}
+
+				$attributes = array();
+				$position = 0;
+
+				foreach ($productData['attributes'] as $rawAttribute) {
+					if (!is_array($rawAttribute)) {
+						continue;
+					}
+
+					$label = $this->pick_attribute_name($rawAttribute);
+					if ('' === $label) {
+						continue;
+					}
+
+					$slug = $this->resolve_attribute_slug($rawAttribute, $label);
+					if ('' === $slug) {
+						continue;
+					}
+
+					$taxonomy = wc_attribute_taxonomy_name($slug);
+					$attributeId = $this->ensure_global_attribute_id($slug, $label);
+					if ($attributeId <= 0 || !$this->register_missing_attribute_taxonomy($taxonomy, $label)) {
+						continue;
+					}
+
+					$options = $this->extract_attribute_options($rawAttribute);
+					if (empty($options)) {
+						continue;
+					}
+
+					$termIds = $this->ensure_term_ids_for_taxonomy($taxonomy, $options);
+					if (empty($termIds)) {
+						continue;
+					}
+
+					$productAttribute = new WC_Product_Attribute();
+					$productAttribute->set_id($attributeId);
+					$productAttribute->set_name($taxonomy);
+					$productAttribute->set_options($termIds);
+					$productAttribute->set_visible(!isset($rawAttribute['visible']) || (bool) $rawAttribute['visible']);
+					$productAttribute->set_variation($isVariable);
+					$productAttribute->set_position($position);
+
+					$attributes[] = $productAttribute;
+					$position++;
+				}
+
+				return $attributes;
 			}
 
-			$attributes = array();
-			$position = 0;
+			private function resolve_attribute_slug($rawAttribute, $fallbackName = '') {
+				$candidates = array(
+					$rawAttribute['slug'] ?? '',
+					$rawAttribute['taxonomy'] ?? '',
+					$rawAttribute['name'] ?? '',
+					$rawAttribute['label'] ?? '',
+					$fallbackName,
+				);
 
-			foreach ($productData['attributes'] as $rawAttribute) {
-				if (!is_array($rawAttribute)) {
-					continue;
+				foreach ($candidates as $candidate) {
+					$text = trim((string) $candidate);
+					if ('' === $text) {
+						continue;
+					}
+
+					$text = preg_replace('/^attribute_/i', '', $text);
+					$text = preg_replace('/^pa_/i', '', $text);
+					$slug = function_exists('wc_sanitize_taxonomy_name') ? wc_sanitize_taxonomy_name($text) : sanitize_title($text);
+					if ('' !== $slug) {
+						return $slug;
+					}
 				}
 
-				$name = $this->pick_attribute_name($rawAttribute);
-				if ('' === $name) {
-					continue;
-				}
-
-				$options = $this->extract_attribute_options($rawAttribute);
-				if (empty($options)) {
-					continue;
-				}
-
-				$productAttribute = new WC_Product_Attribute();
-				$productAttribute->set_id(0);
-				$productAttribute->set_name($name);
-				$productAttribute->set_options($options);
-				$productAttribute->set_visible(!isset($rawAttribute['visible']) || (bool) $rawAttribute['visible']);
-				$productAttribute->set_variation($isVariable);
-				$productAttribute->set_position($position);
-
-				$attributes[] = $productAttribute;
-				$position++;
+				return '';
 			}
 
-			return $attributes;
-		}
-
-		private function pick_attribute_name($rawAttribute) {
-			$candidates = array(
-				$rawAttribute['name'] ?? '',
-				$rawAttribute['label'] ?? '',
-				$rawAttribute['slug'] ?? '',
-				$rawAttribute['taxonomy'] ?? '',
-			);
-
-			foreach ($candidates as $value) {
-				$text = trim((string) $value);
-				if ('' !== $text) {
-					return wc_clean(str_replace('pa_', '', $text));
+			private function ensure_global_attribute_id($slug, $label) {
+				$cleanSlug = function_exists('wc_sanitize_taxonomy_name') ? wc_sanitize_taxonomy_name((string) $slug) : sanitize_title((string) $slug);
+				if ('' === $cleanSlug) {
+					return 0;
 				}
+
+				$attributeId = function_exists('wc_attribute_taxonomy_id_by_name') ? (int) wc_attribute_taxonomy_id_by_name($cleanSlug) : 0;
+				if ($attributeId > 0) {
+					return $attributeId;
+				}
+
+				if (!function_exists('wc_create_attribute')) {
+					return 0;
+				}
+
+				$attributeLabel = trim((string) $label);
+				if ('' === $attributeLabel) {
+					$attributeLabel = ucwords(str_replace(array('-', '_'), ' ', $cleanSlug));
+				}
+
+				$created = wc_create_attribute(
+					array(
+						'name' => $attributeLabel,
+						'slug' => $cleanSlug,
+						'type' => 'select',
+						'order_by' => 'menu_order',
+						'has_archives' => false,
+					)
+				);
+
+				if (is_wp_error($created)) {
+					return function_exists('wc_attribute_taxonomy_id_by_name') ? (int) wc_attribute_taxonomy_id_by_name($cleanSlug) : 0;
+				}
+
+				delete_transient('wc_attribute_taxonomies');
+
+				if (is_numeric($created) && (int) $created > 0) {
+					return (int) $created;
+				}
+
+				return function_exists('wc_attribute_taxonomy_id_by_name') ? (int) wc_attribute_taxonomy_id_by_name($cleanSlug) : 0;
 			}
 
-			return '';
-		}
+			private function register_missing_attribute_taxonomy($taxonomy, $label) {
+				$taxonomy = (string) $taxonomy;
+				if ('' === $taxonomy) {
+					return false;
+				}
 
-		private function extract_attribute_options($rawAttribute) {
-			$options = array();
+				if (taxonomy_exists($taxonomy)) {
+					return true;
+				}
 
-			if (!empty($rawAttribute['terms']) && is_array($rawAttribute['terms'])) {
-				foreach ($rawAttribute['terms'] as $term) {
-					if (is_array($term)) {
-						if (!empty($term['name'])) {
-							$options[] = wc_clean((string) $term['name']);
-						} elseif (!empty($term['slug'])) {
-							$options[] = wc_clean((string) $term['slug']);
+				register_taxonomy(
+					$taxonomy,
+					apply_filters('woocommerce_taxonomy_objects_' . $taxonomy, array('product')),
+					apply_filters(
+						'woocommerce_taxonomy_args_' . $taxonomy,
+						array(
+							'hierarchical' => false,
+							'show_ui' => false,
+							'query_var' => true,
+							'rewrite' => false,
+							'public' => false,
+							'show_in_nav_menus' => false,
+							'show_tagcloud' => false,
+							'labels' => array(
+								'name' => '' !== trim((string) $label) ? trim((string) $label) : $taxonomy,
+							),
+							'capabilities' => array(
+								'manage_terms' => 'manage_product_terms',
+								'edit_terms' => 'edit_product_terms',
+								'delete_terms' => 'delete_product_terms',
+								'assign_terms' => 'assign_product_terms',
+							),
+						)
+					)
+				);
+
+				return taxonomy_exists($taxonomy);
+			}
+
+			private function ensure_term_ids_for_taxonomy($taxonomy, $options) {
+				if (!is_array($options) || empty($options)) {
+					return array();
+				}
+
+				$ids = array();
+				foreach ($options as $option) {
+					$termId = $this->ensure_term_id_for_taxonomy($taxonomy, $option);
+					if ($termId > 0) {
+						$ids[] = $termId;
+					}
+				}
+
+				return array_values(array_unique($ids));
+			}
+
+			private function ensure_term_id_for_taxonomy($taxonomy, $value) {
+				$cleanValue = wc_clean((string) $value);
+				$cleanValue = trim($cleanValue);
+				if ('' === $cleanValue || !$this->register_missing_attribute_taxonomy($taxonomy, $taxonomy)) {
+					return 0;
+				}
+
+				$term = term_exists($cleanValue, $taxonomy);
+				if (is_array($term) && isset($term['term_id'])) {
+					return (int) $term['term_id'];
+				}
+				if (is_numeric($term)) {
+					return (int) $term;
+				}
+
+				$slug = sanitize_title(remove_accents($cleanValue));
+				if ('' !== $slug) {
+					$existingBySlug = get_term_by('slug', $slug, $taxonomy);
+					if ($existingBySlug && !is_wp_error($existingBySlug)) {
+						return (int) $existingBySlug->term_id;
+					}
+				}
+
+				$insertArgs = '' !== $slug ? array('slug' => $slug) : array();
+				$insert = wp_insert_term($cleanValue, $taxonomy, $insertArgs);
+				if (is_wp_error($insert)) {
+					$existingId = $insert->get_error_data('term_exists');
+					if (is_numeric($existingId)) {
+						return (int) $existingId;
+					}
+
+					return 0;
+				}
+
+				return is_array($insert) && isset($insert['term_id']) ? (int) $insert['term_id'] : 0;
+			}
+
+			private function resolve_term_slug_for_taxonomy($taxonomy, $value) {
+				$cleanValue = wc_clean((string) $value);
+				$cleanValue = trim($cleanValue);
+				if ('' === $cleanValue) {
+					return '';
+				}
+
+				$termId = $this->ensure_term_id_for_taxonomy($taxonomy, $cleanValue);
+				if ($termId <= 0) {
+					return sanitize_title(remove_accents($cleanValue));
+				}
+
+				$term = get_term($termId, $taxonomy);
+				if ($term && !is_wp_error($term) && !empty($term->slug)) {
+					return (string) $term->slug;
+				}
+
+				return sanitize_title(remove_accents($cleanValue));
+			}
+
+			private function normalize_attribute_candidate_key($value) {
+				$text = trim(strtolower((string) $value));
+				if ('' === $text) {
+					return '';
+				}
+
+				$text = preg_replace('/^attribute_/', '', $text);
+				$text = preg_replace('/^pa_/', '', $text);
+				return sanitize_title($text);
+			}
+
+			private function pick_attribute_name($rawAttribute) {
+				$candidates = array(
+					$rawAttribute['name'] ?? '',
+					$rawAttribute['label'] ?? '',
+					$rawAttribute['slug'] ?? '',
+					$rawAttribute['taxonomy'] ?? '',
+				);
+
+				foreach ($candidates as $value) {
+					$text = trim((string) $value);
+					if ('' === $text) {
+						continue;
+					}
+
+					$text = preg_replace('/^attribute_/i', '', $text);
+					$text = preg_replace('/^pa_/i', '', $text);
+					$clean = wc_clean($text);
+					if ('' !== $clean) {
+						return $clean;
+					}
+				}
+
+				return '';
+			}
+
+			private function extract_attribute_options($rawAttribute) {
+				$options = array();
+
+				if (!empty($rawAttribute['terms']) && is_array($rawAttribute['terms'])) {
+					foreach ($rawAttribute['terms'] as $term) {
+						if (is_array($term)) {
+							if (!empty($term['name'])) {
+								$options[] = wc_clean((string) $term['name']);
+							} elseif (!empty($term['slug'])) {
+								$options[] = wc_clean((string) $term['slug']);
+							}
+						} elseif (is_string($term)) {
+							$options[] = wc_clean($term);
 						}
-					} elseif (is_string($term)) {
-						$options[] = wc_clean($term);
 					}
 				}
-			}
 
-			if (!empty($rawAttribute['options']) && is_array($rawAttribute['options'])) {
-				foreach ($rawAttribute['options'] as $option) {
-					if (is_string($option) || is_numeric($option)) {
-						$options[] = wc_clean((string) $option);
+				if (!empty($rawAttribute['options']) && is_array($rawAttribute['options'])) {
+					foreach ($rawAttribute['options'] as $option) {
+						if (is_string($option) || is_numeric($option)) {
+							$options[] = wc_clean((string) $option);
+						}
 					}
 				}
-			}
 
-			if (!empty($rawAttribute['option'])) {
-				$options[] = wc_clean((string) $rawAttribute['option']);
-			}
+				if (!empty($rawAttribute['option'])) {
+					$options[] = wc_clean((string) $rawAttribute['option']);
+				}
 
-			if (!empty($rawAttribute['value']) && (is_string($rawAttribute['value']) || is_numeric($rawAttribute['value']))) {
-				$options[] = wc_clean((string) $rawAttribute['value']);
-			}
+				if (!empty($rawAttribute['value']) && (is_string($rawAttribute['value']) || is_numeric($rawAttribute['value']))) {
+					$options[] = wc_clean((string) $rawAttribute['value']);
+				}
 
-			if (!empty($rawAttribute['values']) && is_array($rawAttribute['values'])) {
-				foreach ($rawAttribute['values'] as $value) {
-					if (is_string($value) || is_numeric($value)) {
-						$options[] = wc_clean((string) $value);
+				if (!empty($rawAttribute['values']) && is_array($rawAttribute['values'])) {
+					foreach ($rawAttribute['values'] as $value) {
+						if (is_string($value) || is_numeric($value)) {
+							$options[] = wc_clean((string) $value);
+						}
 					}
 				}
+
+				$options = array_map('trim', $options);
+				$options = array_filter(
+					$options,
+					static function ($value) {
+						return '' !== $value;
+					}
+				);
+
+				return array_values(array_unique($options));
 			}
-
-			$options = array_map('trim', $options);
-			$options = array_filter($options, static function ($value) {
-				return '' !== $value;
-			});
-
-			return array_values(array_unique($options));
-		}
 
 		private function is_variable_product_payload($productData) {
 			if (!empty($productData['type']) && 'variable' === strtolower((string) $productData['type'])) {
@@ -1434,71 +1652,85 @@ if (!defined('ABSPATH')) {
 			}
 		}
 
-		private function build_attribute_key_map($attributes) {
-			$map = array();
-			if (!is_array($attributes)) {
-				return $map;
-			}
-
-			foreach ($attributes as $attribute) {
-				if (!is_array($attribute)) {
-					continue;
+			private function build_attribute_key_map($attributes) {
+				$map = array();
+				if (!is_array($attributes)) {
+					return $map;
 				}
 
-				$name = $this->pick_attribute_name($attribute);
-				if ('' === $name) {
-					continue;
-				}
+				foreach ($attributes as $attribute) {
+					if (!is_array($attribute)) {
+						continue;
+					}
 
-				$canonicalKey = sanitize_title($name);
-				$map[$canonicalKey] = $canonicalKey;
+					$name = $this->pick_attribute_name($attribute);
+					$slug = $this->resolve_attribute_slug($attribute, $name);
+					if ('' === $slug) {
+						continue;
+					}
 
-				$candidates = array(
-					$attribute['name'] ?? '',
-					$attribute['label'] ?? '',
-					$attribute['slug'] ?? '',
-					$attribute['taxonomy'] ?? '',
-				);
+					$taxonomy = wc_attribute_taxonomy_name($slug);
+					$canonicalKey = sanitize_title($slug);
+					$map[$canonicalKey] = $taxonomy;
+					$map[$this->normalize_attribute_candidate_key($taxonomy)] = $taxonomy;
 
-				foreach ($candidates as $candidate) {
-					$candidateKey = sanitize_title(str_replace('pa_', '', (string) $candidate));
-					if ('' !== $candidateKey) {
-						$map[$candidateKey] = $canonicalKey;
+					$candidates = array(
+						$attribute['name'] ?? '',
+						$attribute['label'] ?? '',
+						$attribute['slug'] ?? '',
+						$attribute['taxonomy'] ?? '',
+						$taxonomy,
+					);
+
+					foreach ($candidates as $candidate) {
+						$candidateKey = $this->normalize_attribute_candidate_key($candidate);
+						if ('' !== $candidateKey) {
+							$map[$candidateKey] = $taxonomy;
+						}
 					}
 				}
-			}
 
-			return $map;
-		}
-
-		private function build_parent_attribute_options_map($attributes) {
-			$map = array();
-			if (!is_array($attributes)) {
 				return $map;
 			}
+
+			private function build_parent_attribute_options_map($attributes) {
+				$map = array();
+				if (!is_array($attributes)) {
+					return $map;
+				}
 
 			foreach ($attributes as $attribute) {
 				if (!is_array($attribute)) {
 					continue;
 				}
 
-				$name = $this->pick_attribute_name($attribute);
-				if ('' === $name) {
-					continue;
+					$name = $this->pick_attribute_name($attribute);
+					$slug = $this->resolve_attribute_slug($attribute, $name);
+					if ('' === $slug) {
+						continue;
+					}
+
+					$key = wc_attribute_taxonomy_name($slug);
+					$options = $this->extract_attribute_options($attribute);
+					if (!empty($options)) {
+						$termIds = $this->ensure_term_ids_for_taxonomy($key, $options);
+						$termNames = array();
+						foreach ($termIds as $termId) {
+							$term = get_term((int) $termId, $key);
+							if ($term && !is_wp_error($term) && !empty($term->name)) {
+								$termNames[] = wc_clean((string) $term->name);
+							}
+						}
+
+						$map[$key] = !empty($termNames) ? array_values(array_unique($termNames)) : $options;
+					}
 				}
 
-				$key = sanitize_title($name);
-				$options = $this->extract_attribute_options($attribute);
-				if (!empty($options)) {
-					$map[$key] = $options;
-				}
+				return $map;
 			}
 
-			return $map;
-		}
-
-		private function extract_variation_attributes($attributes, $attributeKeyMap, $parentAttributeOptions) {
-			$result = array();
+			private function extract_variation_attributes($attributes, $attributeKeyMap, $parentAttributeOptions) {
+				$result = array();
 
 			if (!is_array($attributes)) {
 				return $result;
@@ -1507,27 +1739,29 @@ if (!defined('ABSPATH')) {
 			$fallbackParentKeys = array_keys($parentAttributeOptions);
 			$fallbackIndex = 0;
 
-			foreach ($attributes as $attribute) {
-				if (!is_array($attribute)) {
-					$fallbackIndex++;
-					continue;
-				}
-
-				$rawCandidates = array(
-					$attribute['name'] ?? '',
-					$attribute['label'] ?? '',
-					$attribute['slug'] ?? '',
-					$attribute['taxonomy'] ?? '',
-				);
-
-				$key = '';
-				foreach ($rawCandidates as $candidate) {
-					$candidateKey = sanitize_title(str_replace('pa_', '', (string) $candidate));
-					if ('' !== $candidateKey && isset($attributeKeyMap[$candidateKey])) {
-						$key = $attributeKeyMap[$candidateKey];
-						break;
+				foreach ($attributes as $attribute) {
+					if (!is_array($attribute)) {
+						$fallbackIndex++;
+						continue;
 					}
-				}
+
+					$rawCandidates = array(
+						$attribute['name'] ?? '',
+						$attribute['label'] ?? '',
+						$attribute['slug'] ?? '',
+						$attribute['taxonomy'] ?? '',
+						$attribute['key'] ?? '',
+						$attribute['attribute'] ?? '',
+					);
+
+					$key = '';
+					foreach ($rawCandidates as $candidate) {
+						$candidateKey = $this->normalize_attribute_candidate_key($candidate);
+						if ('' !== $candidateKey && isset($attributeKeyMap[$candidateKey])) {
+							$key = $attributeKeyMap[$candidateKey];
+							break;
+						}
+					}
 
 				if ('' === $key && isset($fallbackParentKeys[$fallbackIndex])) {
 					$key = $fallbackParentKeys[$fallbackIndex];
@@ -1538,11 +1772,15 @@ if (!defined('ABSPATH')) {
 					continue;
 				}
 
-				$options = $this->extract_attribute_options($attribute);
-				$value = !empty($options) ? (string) $options[0] : '';
-				if ('' !== $value) {
-					$result[$key] = $this->match_value_to_parent_options($value, $parentAttributeOptions[$key] ?? array());
-				}
+					$options = $this->extract_attribute_options($attribute);
+					$value = !empty($options) ? (string) $options[0] : '';
+					if ('' !== $value) {
+						$matchedValue = $this->match_value_to_parent_options($value, $parentAttributeOptions[$key] ?? array());
+						$slugValue = $this->resolve_term_slug_for_taxonomy($key, $matchedValue);
+						if ('' !== $slugValue) {
+							$result[$key] = $slugValue;
+						}
+					}
 
 				$fallbackIndex++;
 			}
