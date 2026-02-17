@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-PT">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Woo Exporter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Manrope:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <main class="layout">
+      <header class="hero">
+        <p class="hero__eyebrow">WOOCOMMERCE EXPORT</p>
+        <h1>Produtos + imagens + CSV pronto para import</h1>
+        <p class="hero__copy">
+          Coloca a URL de uma loja WooCommerce e a app exporta os produtos da API publica, baixa as imagens
+          e gera um ficheiro CSV preparado para importar noutro WooCommerce.
+        </p>
+      </header>
+
+      <section class="panel">
+        <form id="scrape-form" class="form">
+          <label class="field">
+            <span>URL da loja</span>
+            <input
+              id="target-url"
+              name="url"
+              type="url"
+              placeholder="https://exemplo.com"
+              required
+              autocomplete="off"
+            />
+          </label>
+
+          <label class="field field--small">
+            <span>Limite de produtos (0 = todos)</span>
+            <input id="max-products" name="maxProducts" type="number" min="0" max="10000" value="0" />
+          </label>
+
+          <label class="field field--full">
+            <span>Pasta de saída</span>
+            <input
+              id="output-dir"
+              name="outputDir"
+              type="text"
+              placeholder="/Users/teu-utilizador/Downloads/woo-exports"
+              autocomplete="off"
+            />
+            <small>Se deixares vazio, usa a pasta padrão fora da app.</small>
+          </label>
+
+          <button id="start-btn" class="button-full" type="submit">Exportar WooCommerce</button>
+        </form>
+
+        <div id="status" class="status status--idle">Aguardando URL...</div>
+
+        <div class="metrics" id="metrics">
+          <article>
+            <p>Produtos encontrados</p>
+            <strong id="m-products-found">0</strong>
+          </article>
+          <article>
+            <p>Produtos processados</p>
+            <strong id="m-products-processed">0</strong>
+          </article>
+          <article>
+            <p>Imagens baixadas</p>
+            <strong id="m-images-downloaded">0</strong>
+          </article>
+          <article>
+            <p>CSV gerado</p>
+            <strong id="m-csv">NAO</strong>
+          </article>
+        </div>
+
+        <div class="result" id="result"></div>
+
+        <section class="log-wrap">
+          <h2>Logs</h2>
+          <pre id="logs"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
