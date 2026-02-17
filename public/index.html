@@ -64,6 +64,17 @@
                 <input id="max-products" name="maxProducts" type="number" min="0" max="10000" value="0" />
               </label>
 
+              <label class="field field--small">
+                <span data-i18n="form.engine.label">Extraction engine</span>
+                <select id="engine-select" name="engine">
+                  <option value="node" data-i18n="form.engine.node">Node.js (current)</option>
+                  <option value="python" data-i18n="form.engine.python">Python (experimental)</option>
+                </select>
+                <small data-i18n="form.engine.help">
+                  Use Python mode for large stores when you want to test a separate extraction worker.
+                </small>
+              </label>
+
               <label class="field field--full">
                 <span data-i18n="form.outputDir.label">Output folder</span>
                 <input

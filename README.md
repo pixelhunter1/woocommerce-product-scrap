@@ -56,6 +56,7 @@ WooCommerce Store Migrator is a two-part system for migrating products between W
 - **Automatic image download** — Downloads all product images with 4x concurrent connections
 - **Dual output formats** — CSV (WooCommerce-native format) + JSON (complete metadata)
 - **Real-time dashboard** — Live progress metrics, logs, and job tracking
+- **Dual extraction engines** — Run with Node.js (default) or Python worker (experimental)
 - **Hacker/cyberpunk UI** — Dark theme with terminal-style interface and live stats
 - **Multilingual UI** — English, French, and Spanish support
 - **Configurable output** — Choose your export directory and product limits
@@ -66,6 +67,7 @@ WooCommerce Store Migrator is a two-part system for migrating products between W
 
 - **Node.js** 20 or higher
 - **npm**
+- **Python 3.10+** *(optional, only if using Python extraction engine)*
 - **WordPress + WooCommerce** (only for the importer plugin)
 
 ---
@@ -92,14 +94,16 @@ Open your browser at **http://localhost:3100**
 
 1. **Enter the store URL** — Paste the full URL of any WooCommerce store (e.g., `https://example-store.com`)
 2. **Set product limit** *(optional)* — Enter a max number of products to export, or leave at `0` for all products (up to 10,000)
-3. **Choose output directory** *(optional)* — Defaults to `~/Downloads/woo-exports`
-4. **Click Export** — The app fetches products via the store's public API, downloads images, and generates export files
+3. **Choose extraction engine** — `Node.js (current)` or `Python (experimental)`
+4. **Choose output directory** *(optional)* — Defaults to `~/Downloads/woo-exports`
+5. **Click Export** — The app fetches products via the store's public API, downloads images, and generates export files
 5. **Monitor progress** — Watch real-time logs and metrics on the dashboard
 
 | Field | Description | Default |
 |-------|-------------|---------|
 | Store URL | Full URL of the WooCommerce store | *(required)* |
 | Max Products | Limit number of products (0 = all) | `0` |
+| Extraction Engine | `node` or `python` | `node` |
 | Output Directory | Where to save exported files | `~/Downloads/woo-exports` |
 
 ---
@@ -201,6 +205,7 @@ Start a new export job.
 {
   "url": "https://example-store.com",
   "maxProducts": 0,
+  "engine": "node",
   "outputDir": "~/Downloads/woo-exports"
 }
 ```
@@ -228,7 +233,9 @@ Get server configuration (default output directory).
 **Response:**
 ```json
 {
-  "defaultOutputDir": "/Users/you/Downloads/woo-exports"
+  "defaultOutputDir": "/Users/you/Downloads/woo-exports",
+  "defaultEngine": "node",
+  "supportedEngines": ["node", "python"]
 }
 ```
 
@@ -239,7 +246,7 @@ Get server configuration (default output directory).
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Backend** | Node.js, Express 5 | HTTP server & API |
-| **Scraping** | Axios, Cheerio | API requests & HTML parsing |
+| **Scraping** | Axios/Cheerio + Python urllib | API requests & HTML parsing |
 | **Frontend** | Vanilla JS, CSS3 | UI dashboard (no build step) |
 | **Plugin** | PHP, WooCommerce API | WordPress product import |
 
@@ -255,7 +262,8 @@ scrap/
 │   └── styles.css          # Hacker/cyberpunk theme styles
 ├── src/
 │   ├── server.js           # Express server & API routes
-│   └── scraper.js          # WooCommerce scraping engine
+│   ├── scraper.js          # WooCommerce scraping engine
+│   └── python_scraper.py   # Python extraction worker (experimental)
 ├── wp-plugin/
 │   ├── woo-json-importer/  # Plugin source files
 │   └── woo-json-importer.zip  # Ready-to-install plugin
@@ -268,6 +276,7 @@ scrap/
 ## Important Notes
 
 - The source store's **public WooCommerce API must be accessible** — if `wc/store/v1` is disabled or blocked, the export will fail.
+- Python mode uses a compatibility TLS fallback by default when local certificate chains are missing. You can disable it with `PYTHON_SCRAPER_INSECURE_TLS=0`.
 - The **CSV output** follows the standard WooCommerce import format but may need minor adjustments depending on custom fields or plugins on the target store.
 - This tool is **focused exclusively on WooCommerce** — it does not crawl general site assets.
 - Default output directory: `~/Downloads/woo-exports`

@@ -5,6 +5,7 @@ const logsEl = document.getElementById('logs');
 const resultEl = document.getElementById('result');
 const outputDirInput = document.getElementById('output-dir');
 const languageSelect = document.getElementById('language-select');
+const engineSelect = document.getElementById('engine-select');
 const runFeedbackEl = document.getElementById('run-feedback');
 
 const metrics = {
@@ -41,6 +42,11 @@ const translations = {
     'form.storeUrl.label': 'Store URL',
     'form.storeUrl.placeholder': 'https://example.com',
     'form.limit.label': 'Product limit (0 = all)',
+    'form.engine.label': 'Extraction engine',
+    'form.engine.node': 'Node.js (current)',
+    'form.engine.python': 'Python (experimental)',
+    'form.engine.help':
+      'Use Python mode for large stores when you want to test a separate extraction worker.',
     'form.outputDir.label': 'Output folder',
     'form.outputDir.placeholder': '/Users/your-user/Downloads/woo-exports',
     'form.outputDir.help': 'If empty, default output folder is used.',
@@ -62,6 +68,7 @@ const translations = {
     'error.readJob': 'Could not read job status.',
     'error.startJob': 'Could not start job.',
     'result.outputDir': 'Output folder',
+    'result.engine': 'Engine',
     'result.products': 'Products',
     'result.imagesDownloaded': 'Images downloaded',
     'result.importCsv': 'Import CSV',
@@ -96,6 +103,11 @@ const translations = {
     'form.storeUrl.label': 'URL de la boutique',
     'form.storeUrl.placeholder': 'https://exemple.com',
     'form.limit.label': 'Limite produits (0 = tous)',
+    'form.engine.label': "Moteur d'extraction",
+    'form.engine.node': 'Node.js (actuel)',
+    'form.engine.python': 'Python (experimental)',
+    'form.engine.help':
+      'Utilisez le mode Python pour les grandes boutiques si vous voulez tester un worker separe.',
     'form.outputDir.label': 'Dossier de sortie',
     'form.outputDir.placeholder': '/Users/votre-user/Downloads/woo-exports',
     'form.outputDir.help': 'Si vide, le dossier par defaut est utilise.',
@@ -117,6 +129,7 @@ const translations = {
     'error.readJob': "Impossible de lire l'etat du job.",
     'error.startJob': "Impossible de demarrer le job.",
     'result.outputDir': 'Dossier de sortie',
+    'result.engine': 'Moteur',
     'result.products': 'Produits',
     'result.imagesDownloaded': 'Images telechargees',
     'result.importCsv': "CSV d'import",
@@ -151,6 +164,11 @@ const translations = {
     'form.storeUrl.label': 'URL de la tienda',
     'form.storeUrl.placeholder': 'https://ejemplo.com',
     'form.limit.label': 'Limite de productos (0 = todos)',
+    'form.engine.label': 'Motor de extraccion',
+    'form.engine.node': 'Node.js (actual)',
+    'form.engine.python': 'Python (experimental)',
+    'form.engine.help':
+      'Usa el modo Python para tiendas grandes si quieres probar un worker de extraccion separado.',
     'form.outputDir.label': 'Carpeta de salida',
     'form.outputDir.placeholder': '/Users/tu-user/Downloads/woo-exports',
     'form.outputDir.help': 'Si se deja vacio, se usa la carpeta por defecto.',
@@ -172,6 +190,7 @@ const translations = {
     'error.readJob': 'No fue posible leer el estado del job.',
     'error.startJob': 'No fue posible iniciar el job.',
     'result.outputDir': 'Carpeta de salida',
+    'result.engine': 'Motor',
     'result.products': 'Productos',
     'result.imagesDownloaded': 'Imagenes descargadas',
     'result.importCsv': 'CSV de importacion',
@@ -348,6 +367,17 @@ async function loadConfig() {
     if (!outputDirInput.value && payload?.defaultOutputDir) {
       outputDirInput.value = payload.defaultOutputDir;
     }
+
+    if (engineSelect && payload?.supportedEngines && Array.isArray(payload.supportedEngines)) {
+      const supported = new Set(payload.supportedEngines.map((item) => String(item)));
+      for (const option of [...engineSelect.options]) {
+        option.hidden = !supported.has(option.value);
+      }
+    }
+
+    if (engineSelect && payload?.defaultEngine && !engineSelect.value) {
+      engineSelect.value = payload.defaultEngine;
+    }
   } catch {
     // Ignore config load issues.
   }
@@ -431,11 +461,13 @@ function startPolling(jobId) {
         const importCsv = job.result?.files?.importCsv || 'n/a';
         const metadataJson = job.result?.files?.metadataJson || 'n/a';
         const sum = job.result?.summary || {};
+        const engine = job.input?.engine || 'node';
         const productsProcessed = sum.productsProcessed || 0;
         const imagesDownloaded = sum.imagesDownloaded || 0;
 
         resultEl.innerHTML = `
           <strong>${t('result.outputDir')}:</strong> ${outputDir}<br>
+          <strong>${t('result.engine')}:</strong> ${engine}<br>
           <strong>${t('result.products')}:</strong> ${productsProcessed}<br>
           <strong>${t('result.imagesDownloaded')}:</strong> ${imagesDownloaded}<br>
           <strong>${t('result.importCsv')}:</strong> ${importCsv}<br>
@@ -497,7 +529,8 @@ form.addEventListener('submit', async (event) => {
   const body = {
     url: document.getElementById('target-url').value.trim(),
     maxProducts: Number(document.getElementById('max-products').value || 0),
-    outputDir: outputDirInput.value.trim()
+    outputDir: outputDirInput.value.trim(),
+    engine: engineSelect?.value || 'node'
   };
 
   try {
