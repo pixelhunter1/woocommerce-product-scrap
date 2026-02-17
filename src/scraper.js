@@ -370,7 +370,7 @@ function normalizeOutputDir(outputDir) {
   return path.resolve(trimmed);
 }
 
-async function fetchWooProducts(siteRoot, onLog, maxProducts) {
+async function fetchWooProducts(siteRoot, onLog, maxProducts, onCollected) {
   const collected = [];
 
   for (let page = 1; page <= 100; page += 1) {
@@ -414,9 +414,16 @@ async function fetchWooProducts(siteRoot, onLog, maxProducts) {
 
     collected.push(...payload);
     onLog(`WooCommerce: página ${page} capturada (${payload.length} produtos).`);
+    if (typeof onCollected === 'function') {
+      onCollected(collected.length);
+    }
 
     if (maxProducts && collected.length >= maxProducts) {
-      return collected.slice(0, maxProducts);
+      const limited = collected.slice(0, maxProducts);
+      if (typeof onCollected === 'function') {
+        onCollected(limited.length);
+      }
+      return limited;
     }
 
     if (payload.length < 100) {
@@ -1331,6 +1338,31 @@ function simplifyVariation(variation, siteRoot) {
   };
 }
 
+function countMissingVariationFields(variationDetails) {
+  if (!Array.isArray(variationDetails)) {
+    return { missingPrices: 0, missingImages: 0, pricesFromHtml: 0, imagesFromHtml: 0 };
+  }
+
+  const missingPrices = variationDetails.filter((variation) => {
+    const prices = variation?.prices || {};
+    return !hasContent(prices.regular_price) && !hasContent(prices.price);
+  }).length;
+
+  const missingImages = variationDetails.filter(
+    (variation) => !hasContent(variation?.image?.src)
+  ).length;
+
+  const pricesFromHtml = variationDetails.filter(
+    (variation) => variation?._diagnostics?.price_source === 'html'
+  ).length;
+
+  const imagesFromHtml = variationDetails.filter(
+    (variation) => variation?._diagnostics?.image_source === 'html'
+  ).length;
+
+  return { missingPrices, missingImages, pricesFromHtml, imagesFromHtml };
+}
+
 function destinationForImage(urlObj, imageDir) {
   const parsedBase = path.basename(decodeURIComponent(urlObj.pathname || ''));
   const base = sanitizeSegment(parsedBase || 'image');
@@ -1391,10 +1423,32 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
     onProgress({ type: 'log', message });
   };
 
+  onProgress({
+    type: 'progress',
+    patch: {
+      stage: 'scanning_products',
+      productsDiscovered: 0,
+      productsProcessed: 0,
+      imagesDownloaded: 0,
+      imagesSkipped: 0,
+      csvGenerated: 0,
+      variationProductsTotal: 0,
+      variationProductsProcessed: 0
+    }
+  });
+
   log(`A obter produtos WooCommerce de ${siteRoot.href}`);
   log(`Destino de saída: ${rootDir}`);
 
-  const products = await fetchWooProducts(siteRoot, log, limit || null);
+  const products = await fetchWooProducts(siteRoot, log, limit || null, (discoveredCount) => {
+    onProgress({
+      type: 'progress',
+      patch: {
+        stage: 'scanning_products',
+        productsDiscovered: discoveredCount
+      }
+    });
+  });
 
   if (products.length === 0) {
     throw new Error('Nenhum produto encontrado na API pública do WooCommerce.');
@@ -1404,11 +1458,21 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
 
   const variableProducts = simplified.filter((product) => isVariableProduct(product));
   let totalVariations = 0;
+  let variationProductsProcessed = 0;
+
+  onProgress({
+    type: 'progress',
+    patch: {
+      stage: 'processing_variations',
+      productsDiscovered: simplified.length,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed: 0
+    }
+  });
 
   await mapWithConcurrency(variableProducts, 3, async (product) => {
     const byEndpoint = await fetchWooVariations(siteRoot, product.id, log);
     const inline = extractInlineVariations(product.raw);
-    const byHtml = await fetchVariationsFromProductPage(product, siteRoot, log);
 
     if (inline.length > 0) {
       log(`Produto ${product.id}: variações embutidas detectadas (${inline.length}).`);
@@ -1417,8 +1481,7 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
     const idCandidates = [
       ...extractVariationIds(product.raw),
       ...extractVariationIdsFromPool(byEndpoint),
-      ...extractVariationIdsFromPool(inline),
-      ...extractVariationIdsFromPool(byHtml)
+      ...extractVariationIdsFromPool(inline)
     ];
 
     let byIds = [];
@@ -1429,55 +1492,66 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       }
     }
 
-    const dedup = new Map();
-    const pools = [
+    const resolveFromPools = (pools) => {
+      const dedup = new Map();
+      for (const pool of pools) {
+        for (const variation of pool.items) {
+          const key = variationKey(variation);
+          if (!key) {
+            continue;
+          }
+
+          const existing = dedup.get(key) || [];
+          existing.push({
+            source: pool.source,
+            variation
+          });
+          dedup.set(key, existing);
+        }
+      }
+
+      return [...dedup.values()].map((candidates) =>
+        simplifyVariation(resolveVariationFromCandidates(candidates, siteRoot), siteRoot)
+      );
+    };
+
+    const basePools = [
       { source: 'endpoint', items: byEndpoint },
       { source: 'inline', items: inline },
-      { source: 'byIds', items: byIds },
-      { source: 'html', items: byHtml }
+      { source: 'byIds', items: byIds }
     ];
+    let resolvedVariations = resolveFromPools(basePools);
+    let counts = countMissingVariationFields(resolvedVariations);
 
-    for (const pool of pools) {
-      for (const variation of pool.items) {
-        const key = variationKey(variation);
-        if (!key) {
-          continue;
-        }
-
-        const existing = dedup.get(key) || [];
-        existing.push({
-          source: pool.source,
-          variation
-        });
-        dedup.set(key, existing);
+    let byHtml = [];
+    if (counts.missingPrices > 0 || counts.missingImages > 0) {
+      byHtml = await fetchVariationsFromProductPage(product, siteRoot, log);
+      if (byHtml.length > 0) {
+        resolvedVariations = resolveFromPools([...basePools, { source: 'html', items: byHtml }]);
+        counts = countMissingVariationFields(resolvedVariations);
       }
     }
 
-    product.variationDetails = [...dedup.values()].map((candidates) =>
-      simplifyVariation(resolveVariationFromCandidates(candidates, siteRoot), siteRoot)
-    );
-
-    const missingPrices = product.variationDetails.filter((variation) => {
-      const prices = variation?.prices || {};
-      return !hasContent(prices.regular_price) && !hasContent(prices.price);
-    }).length;
-    const missingImages = product.variationDetails.filter(
-      (variation) => !hasContent(variation?.image?.src)
-    ).length;
-    const pricesFromHtml = product.variationDetails.filter(
-      (variation) => variation?._diagnostics?.price_source === 'html'
-    ).length;
-    const imagesFromHtml = product.variationDetails.filter(
-      (variation) => variation?._diagnostics?.image_source === 'html'
-    ).length;
+    product.variationDetails = resolvedVariations;
 
     if (product.variationDetails.length > 0) {
       log(
-        `Produto ${product.id}: variações=${product.variationDetails.length}, preço via HTML=${pricesFromHtml}, imagem via HTML=${imagesFromHtml}, sem preço=${missingPrices}, sem imagem=${missingImages}.`
+        `Produto ${product.id}: variações=${product.variationDetails.length}, preço via HTML=${counts.pricesFromHtml}, imagem via HTML=${counts.imagesFromHtml}, sem preço=${counts.missingPrices}, sem imagem=${counts.missingImages}.`
       );
     }
 
     totalVariations += product.variationDetails.length;
+    variationProductsProcessed += 1;
+
+    onProgress({
+      type: 'progress',
+      patch: {
+        stage: 'processing_variations',
+        productsDiscovered: simplified.length,
+        variationProductsTotal: variableProducts.length,
+        variationProductsProcessed
+      }
+    });
   });
 
   if (variableProducts.length > 0) {
@@ -1489,11 +1563,14 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
   onProgress({
     type: 'progress',
     patch: {
+      stage: 'downloading_images',
       productsDiscovered: simplified.length,
       productsProcessed: 0,
       imagesDownloaded: 0,
       imagesSkipped: 0,
-      csvGenerated: 0
+      csvGenerated: 0,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed
     }
   });
 
@@ -1557,10 +1634,13 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       onProgress({
         type: 'progress',
         patch: {
+          stage: 'downloading_images',
           productsDiscovered: simplified.length,
           productsProcessed,
           imagesDownloaded,
-          imagesSkipped
+          imagesSkipped,
+          variationProductsTotal: variableProducts.length,
+          variationProductsProcessed
         }
       });
     });
@@ -1569,10 +1649,13 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
     onProgress({
       type: 'progress',
       patch: {
+        stage: 'downloading_images',
         productsDiscovered: simplified.length,
         productsProcessed,
         imagesDownloaded,
-        imagesSkipped
+        imagesSkipped,
+        variationProductsTotal: variableProducts.length,
+        variationProductsProcessed
       }
     });
   }
@@ -1584,11 +1667,14 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
   onProgress({
     type: 'progress',
     patch: {
+      stage: 'completed',
       productsDiscovered: simplified.length,
       productsProcessed,
       imagesDownloaded,
       imagesSkipped,
-      csvGenerated: 1
+      csvGenerated: 1,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed
     }
   });
 

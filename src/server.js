@@ -39,11 +39,14 @@ function createJob(url, maxProducts, outputDir) {
     updatedAt: now,
     logs: [],
     progress: {
+      stage: 'queued',
       productsDiscovered: 0,
       productsProcessed: 0,
       imagesDownloaded: 0,
       imagesSkipped: 0,
-      csvGenerated: 0
+      csvGenerated: 0,
+      variationProductsTotal: 0,
+      variationProductsProcessed: 0
     },
     result: null,
     error: null

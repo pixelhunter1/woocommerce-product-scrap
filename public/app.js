@@ -69,6 +69,10 @@ const translations = {
     'feedback.running.title': 'Export in progress',
     'feedback.running.body':
       'Processing {processed}/{discovered} products. Images downloaded: {images}.',
+    'feedback.running.stage.scan': 'Stage: scanning product catalog...',
+    'feedback.running.stage.variations': 'Stage: resolving variation data ({done}/{total}).',
+    'feedback.running.stage.images': 'Stage: downloading product images...',
+    'feedback.running.stage.default': 'Stage: running export pipeline...',
     'feedback.success.title': 'Export completed',
     'feedback.success.body': 'All files were generated successfully and are ready for import.',
     'feedback.failed.title': 'Export failed',
@@ -120,6 +124,10 @@ const translations = {
     'feedback.running.title': 'Export en cours',
     'feedback.running.body':
       'Traitement {processed}/{discovered} produits. Images telechargees: {images}.',
+    'feedback.running.stage.scan': 'Etape: analyse du catalogue produits...',
+    'feedback.running.stage.variations': 'Etape: resolution des variations ({done}/{total}).',
+    'feedback.running.stage.images': 'Etape: telechargement des images produits...',
+    'feedback.running.stage.default': "Etape: execution du pipeline d'export...",
     'feedback.success.title': 'Export termine',
     'feedback.success.body': 'Tous les fichiers ont ete generes avec succes et sont prets a importer.',
     'feedback.failed.title': "Echec de l'export",
@@ -171,6 +179,10 @@ const translations = {
     'feedback.running.title': 'Exportacion en progreso',
     'feedback.running.body':
       'Procesando {processed}/{discovered} productos. Imagenes descargadas: {images}.',
+    'feedback.running.stage.scan': 'Etapa: escaneando catalogo de productos...',
+    'feedback.running.stage.variations': 'Etapa: resolviendo variaciones ({done}/{total}).',
+    'feedback.running.stage.images': 'Etapa: descargando imagenes de productos...',
+    'feedback.running.stage.default': 'Etapa: ejecutando pipeline de exportacion...',
     'feedback.success.title': 'Exportacion completada',
     'feedback.success.body': 'Todos los archivos se generaron correctamente y estan listos para importar.',
     'feedback.failed.title': 'Exportacion fallida',
@@ -239,9 +251,26 @@ function renderFeedback() {
     const discovered = feedbackModel.discovered ?? 0;
     const processed = feedbackModel.processed ?? 0;
     const images = feedbackModel.images ?? 0;
+    const variationDone = feedbackModel.variationDone ?? 0;
+    const variationTotal = feedbackModel.variationTotal ?? 0;
+    const stage = feedbackModel.stage || '';
+    let stageText = t('feedback.running.stage.default');
+
+    if (stage === 'scanning_products') {
+      stageText = t('feedback.running.stage.scan');
+    } else if (stage === 'processing_variations') {
+      stageText = t('feedback.running.stage.variations', {
+        done: variationDone,
+        total: variationTotal
+      });
+    } else if (stage === 'downloading_images') {
+      stageText = t('feedback.running.stage.images');
+    }
+
     runFeedbackEl.className = 'run-feedback run-feedback--running';
     runFeedbackEl.innerHTML = `
       <strong>${escapeHtml(t('feedback.running.title'))}</strong>
+      <p>${escapeHtml(stageText)}</p>
       <p>${escapeHtml(t('feedback.running.body', { discovered, processed, images }))}</p>
     `;
     runFeedbackEl.hidden = false;
@@ -386,9 +415,12 @@ function startPolling(jobId) {
       appendLogs(job.logs);
       setFeedbackModel({
         type: 'running',
+        stage: job.progress?.stage || 'running',
         discovered: job.progress?.productsDiscovered ?? 0,
         processed: job.progress?.productsProcessed ?? 0,
-        images: job.progress?.imagesDownloaded ?? 0
+        images: job.progress?.imagesDownloaded ?? 0,
+        variationDone: job.progress?.variationProductsProcessed ?? 0,
+        variationTotal: job.progress?.variationProductsTotal ?? 0
       });
 
       if (job.status === 'finished') {
@@ -454,9 +486,12 @@ form.addEventListener('submit', async (event) => {
   setStatusKey('status.starting', 'running');
   setFeedbackModel({
     type: 'running',
+    stage: 'scanning_products',
     discovered: 0,
     processed: 0,
-    images: 0
+    images: 0,
+    variationDone: 0,
+    variationTotal: 0
   });
 
   const body = {
