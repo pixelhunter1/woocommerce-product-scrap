@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="pt-PT">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Woo Export Ops Console</title>
+    <title>WooCommerce Export Operations Console</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,11 +19,21 @@
 
     <main class="console">
       <header class="hero reveal">
-        <p class="hero__eyebrow">WOO EXPORT OPS</p>
-        <h1>HACKER MODE DATA EXFILTRATION</h1>
-        <p class="hero__copy">
-          Liga uma loja WooCommerce, extrai catalogo completo, baixa assets e gera ficheiros de migracao.
-          Stack de exportacao focada em velocidade, rastreio e controlo operacional.
+        <div class="hero__top">
+          <p class="hero__eyebrow" data-i18n="hero.eyebrow">WOOCOMMERCE EXPORT OPS</p>
+          <label class="lang-switch" for="language-select">
+            <span data-i18n="language.label">Language</span>
+            <select id="language-select" aria-label="Language selector">
+              <option value="en">English</option>
+              <option value="fr">Francais</option>
+              <option value="es">Espanol</option>
+            </select>
+          </label>
+        </div>
+        <h1 data-i18n="hero.title">Professional Data Export Console</h1>
+        <p class="hero__copy" data-i18n="hero.copy">
+          Connect any WooCommerce storefront, capture structured catalog data, and generate migration-ready
+          outputs with operational visibility.
         </p>
       </header>
 
@@ -31,50 +41,54 @@
         <div class="stack stack--left">
           <section class="panel reveal">
             <div class="panel__head">
-              <h2>Target Configuration</h2>
-              <span class="chip">LIVE LINK</span>
+              <h2 data-i18n="panel.target.title">Target Configuration</h2>
+              <span class="chip" data-i18n="chip.live">LIVE LINK</span>
             </div>
 
             <form id="scrape-form" class="form">
               <label class="field">
-                <span>URL da loja</span>
+                <span data-i18n="form.storeUrl.label">Store URL</span>
                 <input
                   id="target-url"
                   name="url"
                   type="url"
-                  placeholder="https://exemplo.com"
+                  placeholder="https://example.com"
+                  data-i18n-placeholder="form.storeUrl.placeholder"
                   required
                   autocomplete="off"
                 />
               </label>
 
               <label class="field field--small">
-                <span>Limite de produtos (0 = todos)</span>
+                <span data-i18n="form.limit.label">Product limit (0 = all)</span>
                 <input id="max-products" name="maxProducts" type="number" min="0" max="10000" value="0" />
               </label>
 
               <label class="field field--full">
-                <span>Pasta de saida</span>
+                <span data-i18n="form.outputDir.label">Output folder</span>
                 <input
                   id="output-dir"
                   name="outputDir"
                   type="text"
-                  placeholder="/Users/teu-utilizador/Downloads/woo-exports"
+                  placeholder="/Users/your-user/Downloads/woo-exports"
+                  data-i18n-placeholder="form.outputDir.placeholder"
                   autocomplete="off"
                 />
-                <small>Default automatico se vazio.</small>
+                <small data-i18n="form.outputDir.help">If empty, default output folder is used.</small>
               </label>
 
-              <button id="start-btn" class="button-full" type="submit">Iniciar Exportacao Woo</button>
+              <button id="start-btn" class="button-full" type="submit" data-i18n="form.submit">
+                Start WooCommerce Export
+              </button>
             </form>
 
-            <div id="status" class="status status--idle">Aguardando URL...</div>
+            <div id="status" class="status status--idle" data-i18n="status.idle">Waiting for URL...</div>
           </section>
 
           <section class="panel reveal">
             <div class="panel__head">
-              <h2>Transfer Report</h2>
-              <span class="chip">OUTPUT</span>
+              <h2 data-i18n="panel.report.title">Transfer Report</h2>
+              <span class="chip" data-i18n="chip.output">OUTPUT</span>
             </div>
             <div class="result" id="result"></div>
           </section>
@@ -83,34 +97,34 @@
         <div class="stack stack--right">
           <section class="panel reveal">
             <div class="panel__head">
-              <h2>Runtime Metrics</h2>
-              <span class="chip">TELEMETRY</span>
+              <h2 data-i18n="panel.metrics.title">Runtime Metrics</h2>
+              <span class="chip" data-i18n="chip.telemetry">TELEMETRY</span>
             </div>
 
             <div class="metrics" id="metrics">
               <article>
-                <p>Produtos encontrados</p>
+                <p data-i18n="metrics.productsFound">Products discovered</p>
                 <strong id="m-products-found">0</strong>
               </article>
               <article>
-                <p>Produtos processados</p>
+                <p data-i18n="metrics.productsProcessed">Products processed</p>
                 <strong id="m-products-processed">0</strong>
               </article>
               <article>
-                <p>Imagens baixadas</p>
+                <p data-i18n="metrics.imagesDownloaded">Images downloaded</p>
                 <strong id="m-images-downloaded">0</strong>
               </article>
               <article>
-                <p>CSV gerado</p>
-                <strong id="m-csv">NAO</strong>
+                <p data-i18n="metrics.csvGenerated">CSV generated</p>
+                <strong id="m-csv">NO</strong>
               </article>
             </div>
           </section>
 
           <section class="panel reveal">
             <div class="panel__head">
-              <h2>Live Logs</h2>
-              <span class="chip">STREAM</span>
+              <h2 data-i18n="panel.logs.title">Live Logs</h2>
+              <span class="chip" data-i18n="chip.stream">STREAM</span>
             </div>
             <pre id="logs"></pre>
           </section>

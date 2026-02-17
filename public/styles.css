@@ -145,12 +145,46 @@ body {
     0 30px 80px rgba(0, 0, 0, 0.35);
 }
 
+.hero__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
 .hero__eyebrow {
   margin: 0;
   font-size: 0.7rem;
   letter-spacing: 0.28rem;
   text-transform: uppercase;
   color: var(--accent-2);
+}
+
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.08rem;
+  text-transform: uppercase;
+}
+
+.lang-switch select {
+  appearance: none;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: rgba(5, 24, 17, 0.84);
+  color: var(--text);
+  padding: 0.3rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+}
+
+.lang-switch select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(54, 255, 171, 0.2);
 }
 
 .hero h1 {
@@ -414,6 +448,15 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+  .hero__top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .lang-switch {
+    margin-top: 0.2rem;
+  }
+
   .hero h1 {
     font-size: 1rem;
     line-height: 1.35;
