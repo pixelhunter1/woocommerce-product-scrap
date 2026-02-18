@@ -2,6 +2,8 @@ const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const mime = require('mime-types');
@@ -21,6 +23,46 @@ const PRICE_IMAGE_SOURCE_PRIORITY = {
   byIds: 3,
   endpoint: 3
 };
+const CPU_COUNT = Array.isArray(os.cpus()) && os.cpus().length > 0 ? os.cpus().length : 4;
+
+function readPositiveIntEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+const REQUEST_TIMEOUT_MS = readPositiveIntEnv('SCRAPER_TIMEOUT_MS', 25000);
+const API_CONCURRENCY = readPositiveIntEnv('SCRAPER_API_CONCURRENCY', Math.min(6, Math.max(3, CPU_COUNT)));
+const VARIATION_CONCURRENCY = readPositiveIntEnv(
+  'SCRAPER_VARIATION_CONCURRENCY',
+  Math.min(8, Math.max(3, CPU_COUNT))
+);
+const IMAGE_CONCURRENCY = readPositiveIntEnv(
+  'SCRAPER_IMAGE_CONCURRENCY',
+  Math.min(16, Math.max(6, CPU_COUNT * 2))
+);
+const BY_IDS_CHUNK_SIZE = readPositiveIntEnv('SCRAPER_BY_IDS_CHUNK_SIZE', 60);
+const BY_IDS_CONCURRENCY = readPositiveIntEnv('SCRAPER_BY_IDS_CONCURRENCY', Math.min(8, API_CONCURRENCY));
+const PROGRESS_THROTTLE_MS = readPositiveIntEnv('SCRAPER_PROGRESS_THROTTLE_MS', 250);
+const JSON_PRETTY_PRINT = process.env.SCRAPER_PRETTY_JSON === '1';
+
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: Math.max(16, IMAGE_CONCURRENCY * 2)
+});
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: Math.max(16, IMAGE_CONCURRENCY * 2)
+});
+
+const axiosClient = axios.create({
+  timeout: REQUEST_TIMEOUT_MS,
+  headers: { 'User-Agent': USER_AGENT },
+  httpAgent,
+  httpsAgent
+});
 
 function sanitizeSegment(input) {
   return String(input)
@@ -47,18 +89,43 @@ async function ensureDir(dirPath) {
 }
 
 async function mapWithConcurrency(items, concurrency, worker) {
-  const queue = [...items];
-  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-    while (queue.length > 0) {
-      const item = queue.shift();
-      if (item === undefined) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+
+  const safeConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+  let nextIndex = 0;
+  const workers = Array.from({ length: safeConcurrency }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) {
         return;
       }
-      await worker(item);
+      await worker(items[currentIndex], currentIndex);
     }
   });
 
   await Promise.all(workers);
+}
+
+async function requestJsonFromEndpoints(siteRoot, endpoints) {
+  for (const endpoint of endpoints) {
+    try {
+      const endpointUrl = new URL(endpoint, siteRoot);
+      const response = await axiosClient.get(endpointUrl.href, {
+        validateStatus: (status) => status >= 200 && status < 500
+      });
+
+      if (response.status === 200 && Array.isArray(response.data)) {
+        return response.data;
+      }
+    } catch {
+      // Try next endpoint.
+    }
+  }
+
+  return null;
 }
 
 function priceMinorToDecimal(value, minorUnit) {
@@ -379,25 +446,7 @@ async function fetchWooProducts(siteRoot, onLog, maxProducts, onCollected) {
       `/?rest_route=/wc/store/v1/products&per_page=100&page=${page}`
     ];
 
-    let payload = null;
-
-    for (const endpoint of endpoints) {
-      try {
-        const endpointUrl = new URL(endpoint, siteRoot);
-        const response = await axios.get(endpointUrl.href, {
-          timeout: 25000,
-          headers: { 'User-Agent': USER_AGENT },
-          validateStatus: (status) => status >= 200 && status < 500
-        });
-
-        if (response.status === 200 && Array.isArray(response.data)) {
-          payload = response.data;
-          break;
-        }
-      } catch {
-        // Try next endpoint.
-      }
-    }
+    const payload = await requestJsonFromEndpoints(siteRoot, endpoints);
 
     if (!payload) {
       if (page === 1) {
@@ -443,25 +492,7 @@ async function fetchWooVariations(siteRoot, productId, onLog) {
       `/?rest_route=/wc/store/v1/products/${productId}/variations&per_page=100&page=${page}`
     ];
 
-    let payload = null;
-
-    for (const endpoint of endpoints) {
-      try {
-        const endpointUrl = new URL(endpoint, siteRoot);
-        const response = await axios.get(endpointUrl.href, {
-          timeout: 25000,
-          headers: { 'User-Agent': USER_AGENT },
-          validateStatus: (status) => status >= 200 && status < 500
-        });
-
-        if (response.status === 200 && Array.isArray(response.data)) {
-          payload = response.data;
-          break;
-        }
-      } catch {
-        // Try next endpoint.
-      }
-    }
+    const payload = await requestJsonFromEndpoints(siteRoot, endpoints);
 
     if (!payload || payload.length === 0) {
       break;
@@ -487,39 +518,20 @@ async function fetchWooProductsByIds(siteRoot, ids) {
   }
 
   const collected = [];
-  const chunks = chunkArray(uniqueIds, 20);
+  const chunks = chunkArray(uniqueIds, BY_IDS_CHUNK_SIZE);
 
-  for (const idChunk of chunks) {
+  await mapWithConcurrency(chunks, BY_IDS_CONCURRENCY, async (idChunk) => {
     const includeValue = idChunk.join(',');
     const endpoints = [
       `/wp-json/wc/store/v1/products?include=${includeValue}&per_page=100`,
       `/?rest_route=/wc/store/v1/products&include=${includeValue}&per_page=100`
     ];
-
-    let payload = null;
-
-    for (const endpoint of endpoints) {
-      try {
-        const endpointUrl = new URL(endpoint, siteRoot);
-        const response = await axios.get(endpointUrl.href, {
-          timeout: 25000,
-          headers: { 'User-Agent': USER_AGENT },
-          validateStatus: (status) => status >= 200 && status < 500
-        });
-
-        if (response.status === 200 && Array.isArray(response.data)) {
-          payload = response.data;
-          break;
-        }
-      } catch {
-        // Try next endpoint.
-      }
-    }
+    const payload = await requestJsonFromEndpoints(siteRoot, endpoints);
 
     if (payload) {
       collected.push(...payload);
     }
-  }
+  });
 
   return collected;
 }
@@ -531,9 +543,7 @@ async function fetchVariationsFromProductPage(product, siteRoot, onLog) {
   }
 
   try {
-    const response = await axios.get(permalink.href, {
-      timeout: 25000,
-      headers: { 'User-Agent': USER_AGENT },
+    const response = await axiosClient.get(permalink.href, {
       validateStatus: (status) => status >= 200 && status < 500
     });
 
@@ -1548,10 +1558,8 @@ async function downloadImage(urlObj, imageDir, onLog) {
   await ensureDir(path.dirname(fallbackPath));
 
   try {
-    const response = await axios.get(urlObj.href, {
+    const response = await axiosClient.get(urlObj.href, {
       responseType: 'arraybuffer',
-      timeout: 25000,
-      headers: { 'User-Agent': USER_AGENT },
       validateStatus: (status) => status >= 200 && status < 400
     });
 
@@ -1589,14 +1597,27 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
   await ensureDir(productsDir);
 
   const limit = Number.isFinite(Number(maxProducts)) ? Math.max(0, Number(maxProducts)) : 0;
+  const scrapeStartedAt = Date.now();
 
   const log = (message) => {
     onProgress({ type: 'log', message });
   };
 
-  onProgress({
-    type: 'progress',
-    patch: {
+  let lastProgressEmit = 0;
+  const emitProgress = (patch, force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressEmit < PROGRESS_THROTTLE_MS) {
+      return;
+    }
+    lastProgressEmit = now;
+    onProgress({
+      type: 'progress',
+      patch
+    });
+  };
+
+  emitProgress(
+    {
       stage: 'scanning_products',
       productsDiscovered: 0,
       productsProcessed: 0,
@@ -1605,19 +1626,20 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       csvGenerated: 0,
       variationProductsTotal: 0,
       variationProductsProcessed: 0
-    }
-  });
+    },
+    true
+  );
 
   log(`A obter produtos WooCommerce de ${siteRoot.href}`);
   log(`Destino de saída: ${rootDir}`);
+  log(
+    `Otimização ativa: api=${API_CONCURRENCY}, variações=${VARIATION_CONCURRENCY}, imagens=${IMAGE_CONCURRENCY}, idsChunk=${BY_IDS_CHUNK_SIZE}.`
+  );
 
   const products = await fetchWooProducts(siteRoot, log, limit || null, (discoveredCount) => {
-    onProgress({
-      type: 'progress',
-      patch: {
-        stage: 'scanning_products',
-        productsDiscovered: discoveredCount
-      }
+    emitProgress({
+      stage: 'scanning_products',
+      productsDiscovered: discoveredCount
     });
   });
 
@@ -1631,17 +1653,17 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
   let totalVariations = 0;
   let variationProductsProcessed = 0;
 
-  onProgress({
-    type: 'progress',
-    patch: {
+  emitProgress(
+    {
       stage: 'processing_variations',
       productsDiscovered: simplified.length,
       variationProductsTotal: variableProducts.length,
       variationProductsProcessed: 0
-    }
-  });
+    },
+    true
+  );
 
-  await mapWithConcurrency(variableProducts, 3, async (product) => {
+  await mapWithConcurrency(variableProducts, VARIATION_CONCURRENCY, async (product) => {
     const byEndpoint = await fetchWooVariations(siteRoot, product.id, log);
     const inline = extractInlineVariations(product.raw);
 
@@ -1714,14 +1736,11 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
     totalVariations += product.variationDetails.length;
     variationProductsProcessed += 1;
 
-    onProgress({
-      type: 'progress',
-      patch: {
-        stage: 'processing_variations',
-        productsDiscovered: simplified.length,
-        variationProductsTotal: variableProducts.length,
-        variationProductsProcessed
-      }
+    emitProgress({
+      stage: 'processing_variations',
+      productsDiscovered: simplified.length,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed
     });
   });
 
@@ -1731,9 +1750,8 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
     );
   }
 
-  onProgress({
-    type: 'progress',
-    patch: {
+  emitProgress(
+    {
       stage: 'downloading_images',
       productsDiscovered: simplified.length,
       productsProcessed: 0,
@@ -1742,34 +1760,30 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       csvGenerated: 0,
       variationProductsTotal: variableProducts.length,
       variationProductsProcessed
-    }
-  });
+    },
+    true
+  );
 
   const metadataJsonPath = path.join(wooDir, 'metadata.json');
+  const metadataPayload = {
+    source: siteRoot.href,
+    captured_at: new Date().toISOString(),
+    total: simplified.length,
+    products: simplified
+  };
   await fs.writeFile(
     metadataJsonPath,
-    JSON.stringify(
-      {
-        source: siteRoot.href,
-        captured_at: new Date().toISOString(),
-        total: simplified.length,
-        products: simplified
-      },
-      null,
-      2
-    )
+    JSON.stringify(metadataPayload, null, JSON_PRETTY_PRINT ? 2 : undefined)
   );
 
   let imagesDownloaded = 0;
   let imagesSkipped = 0;
   let productsProcessed = 0;
 
-  for (const product of simplified) {
+  const imagePlans = simplified.map((product, index) => {
     const productSlug = sanitizeSegment(product.slug || `${product.id}`);
     const productDir = path.join(productsDir, `${productSlug}-${product.id}`);
     const imageDir = path.join(productDir, 'images');
-    await ensureDir(imageDir);
-
     const imageUrlSet = new Set();
 
     const productImages = Array.isArray(product.images) ? product.images : [];
@@ -1786,40 +1800,39 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       }
     }
 
-    const images = [...imageUrlSet].map((src) => ({ src }));
+    return {
+      index,
+      imageDir,
+      imageSources: [...imageUrlSet]
+    };
+  });
 
-    await mapWithConcurrency(images, 4, async (image) => {
-      const imageUrl = toAbsoluteUrl(image?.src, siteRoot);
-      if (!imageUrl) {
-        imagesSkipped += 1;
-        return;
-      }
+  await mapWithConcurrency(imagePlans, API_CONCURRENCY, async (plan) => {
+    await ensureDir(plan.imageDir);
+  });
 
-      const result = await downloadImage(imageUrl, imageDir, log);
-      if (result.skipped) {
-        imagesSkipped += 1;
-      } else {
-        imagesDownloaded += 1;
-      }
+  const remainingByProduct = new Map();
+  const imageTasks = [];
 
-      onProgress({
-        type: 'progress',
-        patch: {
-          stage: 'downloading_images',
-          productsDiscovered: simplified.length,
-          productsProcessed,
-          imagesDownloaded,
-          imagesSkipped,
-          variationProductsTotal: variableProducts.length,
-          variationProductsProcessed
-        }
+  for (const plan of imagePlans) {
+    remainingByProduct.set(plan.index, plan.imageSources.length);
+    if (plan.imageSources.length === 0) {
+      productsProcessed += 1;
+      continue;
+    }
+
+    for (const src of plan.imageSources) {
+      imageTasks.push({
+        productIndex: plan.index,
+        imageDir: plan.imageDir,
+        src
       });
-    });
+    }
+  }
 
-    productsProcessed += 1;
-    onProgress({
-      type: 'progress',
-      patch: {
+  if (productsProcessed > 0) {
+    emitProgress(
+      {
         stage: 'downloading_images',
         productsDiscovered: simplified.length,
         productsProcessed,
@@ -1827,17 +1840,60 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
         imagesSkipped,
         variationProductsTotal: variableProducts.length,
         variationProductsProcessed
-      }
-    });
+      },
+      true
+    );
   }
+
+  await mapWithConcurrency(imageTasks, IMAGE_CONCURRENCY, async (task) => {
+    const imageUrl = toAbsoluteUrl(task.src, siteRoot);
+    if (!imageUrl) {
+      imagesSkipped += 1;
+    } else {
+      const result = await downloadImage(imageUrl, task.imageDir, log);
+      if (result.skipped) {
+        imagesSkipped += 1;
+      } else {
+        imagesDownloaded += 1;
+      }
+    }
+
+    const currentRemaining = (remainingByProduct.get(task.productIndex) || 0) - 1;
+    remainingByProduct.set(task.productIndex, Math.max(0, currentRemaining));
+    if (currentRemaining <= 0) {
+      productsProcessed += 1;
+    }
+
+    emitProgress({
+      stage: 'downloading_images',
+      productsDiscovered: simplified.length,
+      productsProcessed,
+      imagesDownloaded,
+      imagesSkipped,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed
+    });
+  });
+
+  emitProgress(
+    {
+      stage: 'downloading_images',
+      productsDiscovered: simplified.length,
+      productsProcessed,
+      imagesDownloaded,
+      imagesSkipped,
+      variationProductsTotal: variableProducts.length,
+      variationProductsProcessed
+    },
+    true
+  );
 
   const { headers, rows } = buildWooImportRows(simplified, siteRoot);
   const csvPath = path.join(wooDir, 'woocommerce-import.csv');
   await writeCsv(csvPath, headers, rows);
 
-  onProgress({
-    type: 'progress',
-    patch: {
+  emitProgress(
+    {
       stage: 'completed',
       productsDiscovered: simplified.length,
       productsProcessed,
@@ -1846,11 +1902,14 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       csvGenerated: 1,
       variationProductsTotal: variableProducts.length,
       variationProductsProcessed
-    }
-  });
+    },
+    true
+  );
+
+  const durationSeconds = Math.max(1, Math.round((Date.now() - scrapeStartedAt) / 1000));
 
   log(
-    `Exportação concluída: ${simplified.length} produtos, ${imagesDownloaded} imagens, metadata.json e CSV gerados.`
+    `Exportação concluída: ${simplified.length} produtos, ${imagesDownloaded} imagens, metadata.json e CSV gerados em ${durationSeconds}s.`
   );
 
   return {
@@ -1867,7 +1926,8 @@ async function runScrapeJob({ url, maxProducts = 0, outputDir }, onProgress) {
       variationsDiscovered: totalVariations,
       imagesDownloaded,
       imagesSkipped,
-      csvGenerated: true
+      csvGenerated: true,
+      durationSeconds
     }
   };
 }

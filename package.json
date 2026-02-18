@@ -4,8 +4,8 @@
   "description": "Web app para exportar produtos WooCommerce e gerar CSV de importacao.",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "start": "SCRAPER_VARIATION_CONCURRENCY=8 SCRAPER_IMAGE_CONCURRENCY=16 SCRAPER_BY_IDS_CONCURRENCY=8 node src/server.js",
+    "dev": "SCRAPER_VARIATION_CONCURRENCY=8 SCRAPER_IMAGE_CONCURRENCY=16 SCRAPER_BY_IDS_CONCURRENCY=8 node --watch src/server.js"
   },
   "keywords": [
     "export",

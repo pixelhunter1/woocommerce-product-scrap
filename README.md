@@ -86,6 +86,12 @@ npm install
 npm start
 ```
 
+`npm start` and `npm run dev` now include a high-performance Node profile by default:
+
+- `SCRAPER_VARIATION_CONCURRENCY=8`
+- `SCRAPER_IMAGE_CONCURRENCY=16`
+- `SCRAPER_BY_IDS_CONCURRENCY=8`
+
 Open your browser at **http://localhost:3100**
 
 ---
@@ -280,6 +286,30 @@ scrap/
 - The **CSV output** follows the standard WooCommerce import format but may need minor adjustments depending on custom fields or plugins on the target store.
 - This tool is **focused exclusively on WooCommerce** — it does not crawl general site assets.
 - Default output directory: `~/Downloads/woo-exports`
+
+### Performance tuning (Node engine)
+
+Defaults already applied in `npm start` and `npm run dev`:
+
+- `SCRAPER_VARIATION_CONCURRENCY=8`
+- `SCRAPER_IMAGE_CONCURRENCY=16`
+- `SCRAPER_BY_IDS_CONCURRENCY=8`
+
+Additional tuning options:
+
+- `SCRAPER_VARIATION_CONCURRENCY` (default script value: `8`)
+- `SCRAPER_IMAGE_CONCURRENCY` (default script value: `16`)
+- `SCRAPER_BY_IDS_CONCURRENCY` (default script value: `8`)
+- `SCRAPER_BY_IDS_CHUNK_SIZE` (default: `60`)
+- `SCRAPER_TIMEOUT_MS` (default: `25000`)
+- `SCRAPER_PROGRESS_THROTTLE_MS` (default: `250`)
+- `SCRAPER_PRETTY_JSON=1` (pretty `metadata.json`, slower write; default is compact for speed)
+
+Example:
+
+```bash
+SCRAPER_VARIATION_CONCURRENCY=8 SCRAPER_IMAGE_CONCURRENCY=16 npm start
+```
 
 ---
 
